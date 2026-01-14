@@ -1,0 +1,14 @@
+# Core 
+# python == 3.10.x
+numpy==1.23.5
+opencv-python==4.8.1.78
+
+# MediaPipe (classic solutions API)
+mediapipe==0.10.9
+protobuf==3.20.3
+
+# ML utilities
+scikit-learn==1.3.2
+
+
+
