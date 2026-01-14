@@ -1,18 +1,28 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>ISL Real-Time Translator</title>
+  <title>ISL Continuous Translator</title>
+
   <style>
     body { text-align: center; font-family: Arial; }
     video { border: 2px solid black; }
-    h1 { color: green; }
+    #output { font-size: 28px; margin-top: 15px; color: green; }
+    button { font-size: 16px; padding: 10px 20px; margin: 10px; }
   </style>
 </head>
+
 <body>
 
 <h2>Indian Sign Language Translator</h2>
+
 <video id="video" width="640" height="480" autoplay></video>
-<h1 id="output">Waiting...</h1>
+
+<div>
+  <button onclick="start()">Start</button>
+  <button onclick="stop()">Stop</button>
+</div>
+
+<div id="output">Idle</div>
 
 <script>
 const video = document.getElementById("video");
@@ -27,21 +37,34 @@ ws.onmessage = (event) => {
   output.innerText = event.data;
 };
 
+function start() {
+  ws.send("START");
+  output.innerText = "Listening...";
+}
+
+function stop() {
+  ws.send("STOP");
+  output.innerText = "Stopped";
+}
+
 function sendFrame() {
+  if (ws.readyState !== WebSocket.OPEN) return;
+
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
+
   const ctx = canvas.getContext("2d");
   ctx.drawImage(video, 0, 0);
 
   canvas.toBlob(blob => {
-    blob.arrayBuffer().then(buffer => {
-      ws.send(buffer);
-    });
-  }, "image/jpeg");
+    if (!blob) return;
+    blob.arrayBuffer().then(buffer => ws.send(buffer));
+  }, "image/jpeg", 0.7);
 }
 
-setInterval(sendFrame, 100); // 10 FPS
+// ~6–7 FPS
+setInterval(sendFrame, 150);
 </script>
 
 </body>
