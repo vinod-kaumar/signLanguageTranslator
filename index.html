@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ISL Real-Time Translator</title>
+  <style>
+    body { text-align: center; font-family: Arial; }
+    video { border: 2px solid black; }
+    h1 { color: green; }
+  </style>
+</head>
+<body>
+
+<h2>Indian Sign Language Translator</h2>
+<video id="video" width="640" height="480" autoplay></video>
+<h1 id="output">Waiting...</h1>
+
+<script>
+const video = document.getElementById("video");
+const output = document.getElementById("output");
+
+navigator.mediaDevices.getUserMedia({ video: true })
+  .then(stream => video.srcObject = stream);
+
+const ws = new WebSocket("ws://localhost:8000/ws");
+
+ws.onmessage = (event) => {
+  output.innerText = event.data;
+};
+
+function sendFrame() {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0);
+
+  canvas.toBlob(blob => {
+    blob.arrayBuffer().then(buffer => {
+      ws.send(buffer);
+    });
+  }, "image/jpeg");
+}
+
+setInterval(sendFrame, 100); // 10 FPS
+</script>
+
+</body>
+</html>
