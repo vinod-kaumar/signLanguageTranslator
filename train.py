@@ -17,25 +17,28 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 DATASET_PATH = "data/ISL_VIDEO"
 
 # ================= LOAD DATA =================
-X, y = [], []
+# X, y = [], []
 
-for label in os.listdir(DATASET_PATH):
-    label_path = os.path.join(DATASET_PATH, label)
-    if not os.path.isdir(label_path):
-        continue
+# for label in os.listdir(DATASET_PATH):
+#     label_path = os.path.join(DATASET_PATH, label)
+#     if not os.path.isdir(label_path):
+#         continue
 
-    for video in os.listdir(label_path):
-        video_path = os.path.join(label_path, video)
-        X.append(process_video(video_path))
-        y.append(label)
+#     for video in os.listdir(label_path):
+#         video_path = os.path.join(label_path, video)
+#         X.append(process_video(video_path))
+#         y.append(label)
 
-X = np.array(X)
+# X = np.array(X)
 encoder = LabelEncoder()
-y = encoder.fit_transform(y)
+# y = encoder.fit_transform(y)
 
-os.makedirs("features", exist_ok=True)
-np.save("features/X.npy", X)
-np.save("features/y.npy", y)
+# os.makedirs("features", exist_ok=True)
+# np.save("features/X.npy", X)
+# np.save("features/y.npy", y)
+
+X = np.load('features/X.npy')
+y = np.load('features/y.npy')
 
 # ================= SPLIT =================
 X_train, X_test, y_train, y_test = train_test_split(
