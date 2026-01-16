@@ -14,5 +14,5 @@ def predict_video(video_path):
 
 # ================= TEST =================
 if __name__ == "__main__":
-    video_path = "aman.mp4" 
+    video_path = "test_video.mp4" 
     print("Prediction:", predict_video(video_path))

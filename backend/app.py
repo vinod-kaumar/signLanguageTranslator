@@ -1,5 +1,6 @@
 import asyncio
 import time
+import json
 from pathlib import Path
 from collections import deque
 
@@ -7,9 +8,9 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import joblib
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-# ================= WINDOWS FIX =================
+# ================= WINDOWS EVENT LOOP FIX =================
 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # ================= APP =================
@@ -41,8 +42,6 @@ INFERENCE_INTERVAL = 4.0  # seconds
 
 # ================= STATE =================
 feature_buffer = deque(maxlen=WINDOW_SIZE)
-collecting = False
-window_start_time = None
 
 # ================= LANDMARK EXTRACTION =================
 def extract_landmarks(results):
@@ -61,77 +60,111 @@ def extract_landmarks(results):
 
     return np.array(features, dtype=np.float32)
 
+
+def landmarks_to_dict(results):
+    def pack(block):
+        return [
+            {"x": lm.x, "y": lm.y, "z": lm.z}
+            for lm in block.landmark
+        ] if block else []
+
+    return {
+        "pose": pack(results.pose_landmarks),
+        "left_hand": pack(results.left_hand_landmarks),
+        "right_hand": pack(results.right_hand_landmarks)
+    }
+
 # ================= WEBSOCKET =================
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
+    print("WebSocket connected")
 
-    global collecting, window_start_time
+    collecting = False
+    next_inference_time = None
+    last_results = None
 
-    while True:
-        message = await ws.receive()
+    try:
+        while True:
+            message = await ws.receive()
 
-        # ================= CONTROL (TEXT) =================
-        if message["type"] == "websocket.receive" and "text" in message:
-            text = message["text"]
+            # ===== CONTROL COMMANDS =====
+            if "text" in message:
+                cmd = message["text"]
 
-            if text == "START":
-                collecting = True
-                feature_buffer.clear()
-                window_start_time = time.time()
-                await ws.send_text("Timer started")
+                if cmd == "START":
+                    collecting = True
+                    feature_buffer.clear()
+                    next_inference_time = time.time() + INFERENCE_INTERVAL
+                    await ws.send_text("STARTED")
+                    continue
+
+                if cmd == "STOP":
+                    collecting = False
+                    feature_buffer.clear()
+                    next_inference_time = None
+                    await ws.send_text("STOPPED")
+                    continue
+
+            if not collecting:
                 continue
 
-            if text == "STOP":
-                collecting = False
+            # ===== FRAME HANDLING =====
+            if "bytes" in message:
+                frame = cv2.imdecode(
+                    np.frombuffer(message["bytes"], np.uint8),
+                    cv2.IMREAD_COLOR
+                )
+
+                if frame is None:
+                    continue
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = holistic.process(frame_rgb)
+                last_results = results
+
+                feature_buffer.append(extract_landmarks(results))
+
+            # ===== INFERENCE =====
+            if next_inference_time and time.time() >= next_inference_time:
+
+                if len(feature_buffer) == 0:
+                    next_inference_time = time.time() + INFERENCE_INTERVAL
+                    continue
+
+                X = np.array(feature_buffer)
+
+                if len(X) >= WINDOW_SIZE:
+                    idx = np.linspace(0, len(X) - 1, WINDOW_SIZE).astype(int)
+                    X = X[idx]
+                else:
+                    padding = np.zeros(
+                        (WINDOW_SIZE - len(X), FEATURES_PER_FRAME),
+                        dtype=np.float32
+                    )
+                    X = np.vstack([X, padding])
+
+                X = X.flatten().reshape(1, -1)
+
+                pred = model.predict(X)[0]
+                label = encoder.inverse_transform([pred])[0]
+
+                payload = {
+                    "label": label,
+                    "landmarks": landmarks_to_dict(last_results)
+                }
+
+                await ws.send_text(json.dumps(payload))
+
                 feature_buffer.clear()
-                window_start_time = None
-                await ws.send_text("Timer stopped")
-                continue
+                next_inference_time = time.time() + INFERENCE_INTERVAL
 
-        # ================= IGNORE FRAMES IF NOT COLLECTING =================
-        if not collecting:
-            continue
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
 
-        # ================= FRAME (BYTES) =================
-        if "bytes" not in message:
-            continue
+    except Exception as e:
+        print("WebSocket error:", e)
 
-        data = message["bytes"]
-
-        np_frame = np.frombuffer(data, dtype=np.uint8)
-        frame = cv2.imdecode(np_frame, cv2.IMREAD_COLOR)
-        if frame is None:
-            continue
-
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = holistic.process(frame_rgb)
-
-        if not (results.left_hand_landmarks or results.right_hand_landmarks):
-            continue
-
-        feature_buffer.append(extract_landmarks(results))
-
-        # ================= 4-SECOND TIMER =================
-        elapsed = time.time() - window_start_time
-
-        if elapsed >= INFERENCE_INTERVAL:
-            X = np.array(feature_buffer)
-
-            if len(X) >= WINDOW_SIZE:
-                idx = np.linspace(0, len(X) - 1, WINDOW_SIZE).astype(int)
-                X = X[idx]
-            else:
-                padding = np.zeros((WINDOW_SIZE - len(X), FEATURES_PER_FRAME))
-                X = np.vstack([X, padding])
-
-            X = X.flatten().reshape(1, -1)
-
-            pred = model.predict(X)[0]
-            label = encoder.inverse_transform([pred])[0]
-
-            await ws.send_text(label)
-
-            # Reset for next 4-second window
-            feature_buffer.clear()
-            window_start_time = time.time()
+    finally:
+        feature_buffer.clear()
+        print("WebSocket cleanup done")
